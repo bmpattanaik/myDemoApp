@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:int="http://www.springframework.org/schema/integration"
+	xmlns:int-jdbc="http://www.springframework.org/schema/integration/jdbc"
+	xmlns:int-jmx="http://www.springframework.org/schema/integration/jmx"
+	xmlns:jdbc="http://www.springframework.org/schema/jdbc" xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:task="http://www.springframework.org/schema/task" xmlns:cache="http://www.springframework.org/schema/cache"
+	xsi:schemaLocation="http://www.springframework.org/schema/integration/jdbc http://www.springframework.org/schema/integration/jdbc/spring-integration-jdbc.xsd
+		http://www.springframework.org/schema/jdbc http://www.springframework.org/schema/jdbc/spring-jdbc-4.3.xsd
+		http://www.springframework.org/schema/task http://www.springframework.org/schema/task/spring-task.xsd
+		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.3.xsd
+		http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+		http://www.springframework.org/schema/integration/jmx http://www.springframework.org/schema/integration/jmx/spring-integration-jmx.xsd
+		http://www.springframework.org/schema/integration http://www.springframework.org/schema/integration/spring-integration.xsd
+		http://www.springframework.org/schema/cache http://www.springframework.org/schema/cache/spring-cache.xsd">
+
+
+	<context:property-placeholder location="classpath:application.properties" />
+
+	<bean id="dataSource"
+		class="org.springframework.jdbc.datasource.DriverManagerDataSource">
+		<property name="driverClassName" value="${spring.datasource.driver-class-name}" />
+		<property name="url" value="${spring.datasource.url}" />
+		<property name="username" value="${spring.datasource.username}" />
+		<property name="password" value="${spring.datasource.password}" />
+	</bean>
+
+	<bean id="countriesDAO" class="com.biswo.myspringapp.dao.CountriesDAO">
+		<constructor-arg name="dataSource" ref="dataSource" />
+	</bean>
+
+	<bean id="statesDAO" class="com.biswo.myspringapp.dao.StatesDAO">
+		<constructor-arg name="dataSource" ref="dataSource" />
+	</bean>
+
+	<bean class="com.biswo.myspringapp.activators.CountryInboundAdapter"
+		id="countryInboundAdapter">
+		 <property name="countriesDAO" ref="countriesDAO" /> 
+	</bean>
+
+	<bean class="com.biswo.myspringapp.activators.SourceStateServiceActivator"
+		id="sourceStateServiceActivator">
+		<property name="statesDAO" ref="statesDAO" />
+	</bean>
+	
+	<bean class="com.biswo.myspringapp.activators.ServiceActivatorOne"
+		id="serviceActivatorOne"/>
+	
+	<bean class="com.biswo.myspringapp.activators.ServiceActivatorTwo"
+		id="serviceActivatorTwo"/>
+	
+	
+
+
+	<int:channel id="countryChannel">
+		<int:queue capacity="1" />
+	</int:channel>
+
+	<int:channel id="stateChannel">
+		<int:queue capacity="1" />
+	</int:channel>
+
+
+	<int:channel id="stateSpitterChannel">
+		<int:queue capacity="1" />
+	</int:channel>
+
+	<int:channel id="stateGateWayChannel" />
+
+	<int:channel id="stateProcessChannel" />
+
+	<int:channel id="errorChannel" />
+
+
+	<task:executor id="stateSourceTaskExec" pool-size="1"
+		queue-capacity="0" rejection-policy="CALLER_RUNS" />
+	<task:executor id="stateProcessTaskExec" pool-size="1"
+		queue-capacity="1" rejection-policy="CALLER_RUNS" />
+
+	<int:inbound-channel-adapter channel="countryChannel"
+		ref="countryInboundAdapter" method="processData">
+		<int:poller fixed-rate="10" />
+	</int:inbound-channel-adapter>
+
+	<int:service-activator input-channel="countryChannel"
+		output-channel="stateSpitterChannel" ref="sourceStateServiceActivator"
+		method="getAllStates">
+		<int:poller fixed-rate="10" task-executor="stateSourceTaskExec" />
+	</int:service-activator>
+
+	<int:splitter input-channel="stateSpitterChannel"
+		output-channel="stateGateWayChannel" >
+	<int:poller fixed-rate="10" />
+	</int:splitter>
+
+	<int:service-activator ref="stateGateWay"
+		input-channel="stateGateWayChannel">
+		<int:request-handler-advice-chain>
+			<ref bean="retrier" />
+		</int:request-handler-advice-chain>
+	</int:service-activator>
+
+	<int:gateway id="stateGateWay" default-request-channel="stateChannel"
+		service-interface="com.biswo.myspringapp.gateway.StateGateWay" />
+	
+	<int:handler-retry-advice id="retrier"
+		max-attempts="4" recovery-channel="errorChannel">
+		<int:exponential-back-off initial="1000"
+			multiplier="5.0" maximum="6000" />
+	</int:handler-retry-advice>
+	
+	<int:bridge id="stateBridge" input-channel="stateChannel" output-channel="stateProcessChannel" >
+		<int:poller fixed-rate="10" task-executor="stateProcessTaskExec" />
+	</int:bridge>
+	
+	<int:chain id="stateChainFlow" input-channel="stateProcessChannel">
+	  <int:service-activator ref="serviceActivatorOne" method="processState" />
+	  <int:service-activator ref="serviceActivatorTwo" method="processState" requires-reply="false"/>
+	</int:chain>
+	
+
+</beans>
