@@ -19,3 +19,5 @@
 	</int:channel>
 Size is one. So I am expecting retry logic needs to trigger. Since queue size is one and all other messages are trying to 
 push to queue. After 6 secs it should go to error channel.
+
+10. if stateChannel channel is full ,the retry logic needs work and needs to send the all the messages to error channel after retry. But this behaviour is not happening.Which needs to be fixed. 
